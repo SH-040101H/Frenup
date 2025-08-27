@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      
+      - name: Lint TypeScript
+        run: pnpm lint
+      
+      - name: Type check
+        run: pnpm type-check
+
+  test-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.12]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: latest
+      
+      - name: Install dependencies
+        run: |
+          uv pip install pre-commit
+          pre-commit install
+      
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+  build:
+    needs: [lint, test-python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      
+      - name: Build applications
+        run: pnpm build
+      
+      - name: Build packages
+        run: |
+          cd packages/shared && pnpm build
+          cd ../pyshared && uv pip install -e .
+          cd ../db && uv pip install -e .

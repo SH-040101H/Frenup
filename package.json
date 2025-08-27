@@ -1,0 +1,25 @@
+{
+  "name": "ir-fitmark",
+  "version": "1.0.0",
+  "description": "Production-ready fitness tracking and AI scoring platform",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "clean": "turbo run clean",
+    "format": "turbo run format",
+    "type-check": "turbo run type-check"
+  },
+  "devDependencies": {
+    "@turbo/gen": "^1.12.4",
+    "turbo": "^1.12.4",
+    "typescript": "^5.3.3"
+  },
+  "packageManager": "pnpm@8.15.4",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
