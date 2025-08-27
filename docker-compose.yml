@@ -1,0 +1,142 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ir-fitmark-postgres
+    environment:
+      POSTGRES_DB: ir_fitmark
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./packages/db/init:/docker-entrypoint-initdb.d
+    networks:
+      - ir-fitmark-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: ir-fitmark-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - ir-fitmark-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.2
+    container_name: ir-fitmark-keycloak
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak_data:/opt/keycloak/data
+    command: start-dev
+    depends_on:
+      - postgres
+    networks:
+      - ir-fitmark-network
+
+  # Development services
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.dev
+    container_name: ir-fitmark-api
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ir_fitmark
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - KEYCLOAK_URL=http://keycloak:8080
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api:/app
+      - ./packages/pyshared:/pyshared
+      - ./packages/db:/db
+    depends_on:
+      - postgres
+      - minio
+      - keycloak
+    networks:
+      - ir-fitmark-network
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    container_name: ir-fitmark-web
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - ./packages/shared:/shared
+    depends_on:
+      - api
+    networks:
+      - ir-fitmark-network
+
+  admin:
+    build:
+      context: ./apps/admin
+      dockerfile: Dockerfile.dev
+    container_name: ir-fitmark-admin
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./apps/admin:/app
+      - ./packages/shared:/shared
+    depends_on:
+      - api
+    networks:
+      - ir-fitmark-network
+
+  worker:
+    build:
+      context: ./apps/worker
+      dockerfile: Dockerfile.dev
+    container_name: ir-fitmark-worker
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ir_fitmark
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    volumes:
+      - ./apps/worker:/app
+      - ./packages/pyshared:/pyshared
+      - ./packages/db:/db
+    depends_on:
+      - postgres
+      - minio
+    networks:
+      - ir-fitmark-network
+
+volumes:
+  postgres_data:
+  minio_data:
+  keycloak_data:
+
+networks:
+  ir-fitmark-network:
+    driver: bridge
