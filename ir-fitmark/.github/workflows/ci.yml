@@ -1,0 +1,312 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  NODE_VERSION: 18
+  PYTHON_VERSION: 3.12
+  PNPM_VERSION: 8
+
+jobs:
+  # TypeScript/Node.js Linting and Type Checking
+  typescript-quality:
+    name: TypeScript Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run TypeScript type check
+        run: pnpm turbo type-check
+
+      - name: Run ESLint
+        run: pnpm turbo lint
+
+      - name: Run Prettier check
+        run: pnpm format:check
+
+  # Python Linting and Type Checking
+  python-quality:
+    name: Python Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: ${{ runner.os }}-python-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-python-${{ env.PYTHON_VERSION }}-
+
+      - name: Install Python dependencies (API)
+        working-directory: apps/api
+        run: |
+          uv venv
+          uv pip install -e .
+          uv pip install -e ../../packages/pyshared
+          uv pip install -e ../../packages/db
+
+      - name: Install Python dependencies (Worker)
+        working-directory: apps/worker
+        run: |
+          uv venv
+          uv pip install -e .
+          uv pip install -e ../../packages/pyshared
+          uv pip install -e ../../packages/db
+
+      - name: Install Python dev dependencies
+        run: |
+          uv pip install black isort ruff mypy
+
+      - name: Run Black
+        run: |
+          black --check apps/api apps/worker packages/pyshared packages/db
+
+      - name: Run isort
+        run: |
+          isort --check-only apps/api apps/worker packages/pyshared packages/db
+
+      - name: Run Ruff
+        run: |
+          ruff check apps/api apps/worker packages/pyshared packages/db
+
+      - name: Run MyPy
+        run: |
+          mypy apps/api apps/worker packages/pyshared packages/db
+
+  # Build and Test
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    needs: [typescript-quality, python-quality]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ir_fitmark_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/uv
+            .venv
+          key: ${{ runner.os }}-python-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-python-${{ env.PYTHON_VERSION }}-
+
+      - name: Install Node.js dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python dependencies
+        run: |
+          cd apps/api && uv venv && uv pip install -e . && uv pip install -e ../../packages/pyshared && uv pip install -e ../../packages/db
+          cd ../worker && uv venv && uv pip install -e . && uv pip install -e ../../packages/pyshared && uv pip install -e ../../packages/db
+
+      - name: Build applications
+        run: pnpm turbo build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_APP_NAME: IR FitMark
+
+      - name: Run Python tests
+        run: |
+          # Add pytest commands here when tests are implemented
+          echo "Python tests will be run here"
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ir_fitmark_test
+          REDIS_URL: redis://localhost:6379/0
+
+      - name: Run Node.js tests
+        run: |
+          # Add npm test commands here when tests are implemented
+          echo "Node.js tests will be run here"
+
+  # Security Scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Dependency Audit
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit Node.js dependencies
+        run: pnpm audit
+
+      - name: Audit Python dependencies
+        run: |
+          cd apps/api
+          uv pip install safety
+          uv pip freeze | safety check
+
+  # Performance Budget Check (for web apps)
+  performance-budget:
+    name: Performance Budget
+    runs-on: ubuntu-latest
+    needs: [build-and-test]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web application
+        run: pnpm turbo build --filter=web
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+      - name: Analyze bundle size
+        run: |
+          cd apps/web
+          npx next build
+          npx @next/bundle-analyzer
+        continue-on-error: true
