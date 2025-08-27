@@ -15,6 +15,7 @@ from alembic import context
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from db.models import SQLModel
+from db.item_models import Item, Warranty, Inspection, ScanEvent, Exception
 from pyshared import settings
 
 # this is the Alembic Config object, which provides

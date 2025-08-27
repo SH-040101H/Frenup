@@ -241,4 +241,6 @@ class WorkerJob(TimestampMixin, table=True):
 # Create all tables (this will be used by Alembic)
 def create_tables(engine):
     """Create all tables."""
+    # Import item models to ensure they're registered with SQLModel.metadata
+    from .item_models import Item, Warranty, Inspection, ScanEvent, Exception
     SQLModel.metadata.create_all(engine)
